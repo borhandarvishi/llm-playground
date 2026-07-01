@@ -16,8 +16,8 @@ except ImportError:  # pragma: no cover
     genai_types = None
 
 
-# Reasoning models that use a fixed default temperature.
-NO_TEMPERATURE_PREFIXES = ("o1", "o3", "o4")
+# Models that only accept the API default temperature (1); custom values are rejected.
+NO_TEMPERATURE_PREFIXES = ("o1", "o3", "o4", "gpt-5")
 
 
 OPENAI_MODELS = [
@@ -77,6 +77,14 @@ def model_supports_temperature(model: str) -> bool:
     return not any(model_lower.startswith(prefix) for prefix in NO_TEMPERATURE_PREFIXES)
 
 
+def _is_fixed_temperature_error(exc: Exception) -> bool:
+    """True when the API rejects a non-default temperature for this model."""
+    msg = str(exc).lower()
+    return "temperature" in msg and (
+        "unsupported" in msg or "does not support" in msg or "only the default" in msg
+    )
+
+
 def _openai_client() -> OpenAI:
     api_key = get_api_key("openai")
     if not api_key:
@@ -128,17 +136,35 @@ def _call_openai(
     try:
         completion = client.chat.completions.create(**kwargs)
     except Exception as exc:
-        return LLMResponse(
-            text="",
-            provider="openai",
-            model=model,
-            input_tokens=None,
-            output_tokens=None,
-            total_tokens=None,
-            raw_usage={},
-            temperature_used=temperature,
-            request_error=str(exc),
-        )
+        if temperature is not None and _is_fixed_temperature_error(exc):
+            kwargs.pop("temperature", None)
+            temperature = None
+            try:
+                completion = client.chat.completions.create(**kwargs)
+            except Exception as retry_exc:
+                return LLMResponse(
+                    text="",
+                    provider="openai",
+                    model=model,
+                    input_tokens=None,
+                    output_tokens=None,
+                    total_tokens=None,
+                    raw_usage={},
+                    temperature_used=None,
+                    request_error=str(retry_exc),
+                )
+        else:
+            return LLMResponse(
+                text="",
+                provider="openai",
+                model=model,
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+                raw_usage={},
+                temperature_used=temperature,
+                request_error=str(exc),
+            )
 
     usage = completion.usage
     input_tokens = getattr(usage, "prompt_tokens", None) if usage else None

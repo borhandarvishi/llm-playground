@@ -11,7 +11,6 @@ Write a prompt, fill `{{variables}}`, pick a model, and send. Each run shows the
 - Auto-detect and fill `{{variable_name}}` placeholders
 - Model and temperature controls
 - Per-request token usage and cost estimate
-- Run history
 
 ## Setup
 

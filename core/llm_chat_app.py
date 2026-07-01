@@ -154,32 +154,6 @@ footer { display: none !important; }
     font-weight: 500;
     font-variant-numeric: tabular-nums;
 }
-.history-wrap {
-    flex: 0 0 auto;
-    max-height: 130px;
-    overflow-y: auto;
-    margin-top: 6px;
-    border-top: 1px solid var(--border-color-primary);
-    padding-top: 6px;
-}
-.history-list { display: flex; flex-direction: column; gap: 4px; }
-.history-empty { font-size: 0.72rem; color: var(--body-text-color-subdued); }
-.history-item {
-    font-size: 0.7rem;
-    padding: 4px 6px;
-    border-radius: 5px;
-    background: var(--background-fill-primary);
-    border: 1px solid var(--border-color-primary);
-    line-height: 1.3;
-}
-.history-meta {
-    display: flex;
-    justify-content: space-between;
-    gap: 6px;
-    color: var(--body-text-color-subdued);
-    font-variant-numeric: tabular-nums;
-}
-.history-model { font-weight: 600; color: var(--body-text-color); }
 """
 
 
@@ -236,13 +210,13 @@ def run_llm_request(
     base_prompt = combine_prompt(prompt_text, file_path)
 
     if not base_prompt:
-        return "Enter a prompt or upload a file.", "", None
+        return "Enter a prompt or upload a file.", ""
 
     var_values = values_from_table(variables_table)
     required_vars = extract_variables(base_prompt)
     missing = [name for name in required_vars if not var_values.get(name, "").strip()]
     if missing:
-        return f"Missing: {', '.join(missing)}", "", None
+        return f"Missing: {', '.join(missing)}", ""
 
     final_prompt = substitute_variables(base_prompt, var_values)
     model = resolve_model(preset_model, provider)
@@ -256,70 +230,10 @@ def run_llm_request(
     )
 
     if response.request_error:
-        return f"Error: {response.request_error}", "", None
+        return f"Error: {response.request_error}", ""
 
     cost = calculate_cost(response)
-    return (
-        response.text,
-        format_cost_compact_html(response, cost),
-        {
-            "model": model,
-            "response": response.text,
-            "cost_usd": cost.total_cost_usd,
-            "total_tokens": cost.total_tokens,
-        },
-    )
-
-
-def run_and_store(
-    provider,
-    preset_model,
-    temperature,
-    prompt_text,
-    prompt_file,
-    variables_table,
-    history,
-):
-    response, cost_bar, entry = run_llm_request(
-        provider,
-        preset_model,
-        temperature,
-        prompt_text,
-        prompt_file,
-        variables_table,
-    )
-    history = append_history(history, entry)
-    return response, cost_bar, history, render_history_html(history)
-
-
-def append_history(history, entry):
-    history = list(history or [])
-    if entry:
-        history.insert(0, entry)
-    return history[:8]
-
-
-def render_history_html(history) -> str:
-    if not history:
-        return '<div class="history-empty">No runs yet</div>'
-
-    items: list[str] = []
-    for item in history:
-        cost = item.get("cost_usd")
-        cost_label = f"${cost:.4f}" if cost is not None else "—"
-        tokens = item.get("total_tokens")
-        token_label = f"{tokens:,}" if tokens is not None else "—"
-        preview = html.escape((item.get("response") or "").strip().replace("\n", " "))
-        if len(preview) > 80:
-            preview = preview[:80] + "…"
-        items.append(
-            f'<div class="history-item">'
-            f'<div class="history-meta">'
-            f'<span class="history-model">{html.escape(item.get("model", ""))}</span>'
-            f"<span>{token_label} · {cost_label}</span>"
-            f"</div>{preview or '—'}</div>"
-        )
-    return f'<div class="history-list">{"".join(items)}</div>'
+    return response.text, format_cost_compact_html(response, cost)
 
 
 def on_upload(prompt_text, uploaded_file):
@@ -342,7 +256,6 @@ def build_ui() -> gr.Blocks:
     initial_supports_temp = model_supports_temperature(initial_model)
 
     with gr.Blocks(title="LLM Chat", css=CUSTOM_CSS) as demo:
-        history_state = gr.State([])
         prompt_file = gr.State(value=None)
 
         with gr.Column(elem_classes=["app-shell"]):
@@ -427,9 +340,6 @@ def build_ui() -> gr.Blocks:
                             interactive=False,
                             placeholder="Response…",
                         )
-                    gr.Markdown("History", elem_classes=["pane-title"])
-                    with gr.Column(elem_classes=["history-wrap"]):
-                        history_html = gr.HTML(render_history_html([]))
 
         provider.change(
             on_provider_change,
@@ -455,7 +365,7 @@ def build_ui() -> gr.Blocks:
         )
 
         send_btn.click(
-            run_and_store,
+            run_llm_request,
             inputs=[
                 provider,
                 model_dropdown,
@@ -463,9 +373,8 @@ def build_ui() -> gr.Blocks:
                 prompt_text,
                 prompt_file,
                 variables_table,
-                history_state,
             ],
-            outputs=[response_box, cost_bar, history_state, history_html],
+            outputs=[response_box, cost_bar],
         )
 
     return demo
