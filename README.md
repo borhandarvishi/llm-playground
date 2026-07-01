@@ -1,4 +1,4 @@
-# Prompt Forge
+# LLM Playground
 
 A minimal Gradio app for running templated LLM prompts across **OpenAI** and **Gemini**.
 
