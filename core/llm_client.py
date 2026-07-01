@@ -16,8 +16,11 @@ except ImportError:  # pragma: no cover
     genai_types = None
 
 
-# Models that only accept the API default temperature (1); custom values are rejected.
-NO_TEMPERATURE_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+# Reasoning models with no temperature parameter at all.
+NO_TEMPERATURE_PREFIXES = ("o1", "o3", "o4")
+
+# Model IDs (and dated variants like gpt-5.5-2025-...) with no temperature support.
+NO_TEMPERATURE_MODELS = frozenset({"gpt-5.5"})
 
 
 OPENAI_MODELS = [
@@ -73,7 +76,11 @@ def get_api_key(provider: str) -> str:
 
 
 def model_supports_temperature(model: str) -> bool:
-    model_lower = model.lower()
+    model_lower = model.lower().strip()
+    if model_lower in NO_TEMPERATURE_MODELS:
+        return False
+    if any(model_lower.startswith(f"{blocked}-") for blocked in NO_TEMPERATURE_MODELS):
+        return False
     return not any(model_lower.startswith(prefix) for prefix in NO_TEMPERATURE_PREFIXES)
 
 

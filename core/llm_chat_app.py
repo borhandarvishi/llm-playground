@@ -9,7 +9,6 @@ Run:
 
 from __future__ import annotations
 
-import html
 import os
 from pathlib import Path
 
@@ -24,9 +23,8 @@ from llm_client import (
     model_supports_temperature,
 )
 from prompt_utils import (
-    combine_prompt,
     extract_variables,
-    get_file_path,
+    read_prompt_file,
     substitute_variables,
     values_from_table,
     variables_table_from_prompt,
@@ -73,14 +71,6 @@ footer { display: none !important; }
     white-space: nowrap;
     padding-right: 6px;
 }
-.topbar .file-chip {
-    font-size: 0.75rem;
-    color: var(--body-text-color-subdued);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 160px;
-}
 
 /* three-column workspace */
 .workspace {
@@ -111,7 +101,17 @@ footer { display: none !important; }
 .pane-body {
     flex: 1 1 auto;
     min-height: 0 !important;
-    overflow: auto;
+    overflow: hidden;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 6px;
+}
+.pane-body .form {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+}
+.pane-body > .block:not(:has(.form)) {
+    flex: 0 0 auto !important;
 }
 .pane-body textarea {
     height: 100% !important;
@@ -136,11 +136,19 @@ footer { display: none !important; }
     flex-wrap: wrap;
     gap: 6px 14px;
     padding: 6px 8px;
-    margin-bottom: 6px;
     border-radius: 6px;
     background: var(--background-fill-primary);
     border: 1px solid var(--border-color-primary);
     flex: 0 0 auto;
+}
+.cost-bar:empty {
+    display: none;
+}
+.pane-body .html-container:empty {
+    display: none !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
 }
 .cost-stat { display: flex; flex-direction: column; gap: 1px; }
 .cost-label {
@@ -182,9 +190,8 @@ def on_model_change(provider: str, preset_model: str):
     return gr.update(value=DEFAULT_TEMPERATURE, interactive=supports_temp)
 
 
-def refresh_variables(prompt_text: str, prompt_file):
-    file_path = get_file_path(prompt_file)
-    rows = variables_table_from_prompt(prompt_text, file_path)
+def refresh_variables(prompt_text: str):
+    rows = variables_table_from_prompt(prompt_text, None)
     if not rows:
         return gr.update(value=[], visible=False), gr.update(
             value='<div class="vars-empty">No {{variables}} in prompt</div>',
@@ -203,11 +210,9 @@ def run_llm_request(
     preset_model: str,
     temperature: float,
     prompt_text: str,
-    prompt_file,
     variables_table,
 ):
-    file_path = get_file_path(prompt_file)
-    base_prompt = combine_prompt(prompt_text, file_path)
+    base_prompt = prompt_text.strip()
 
     if not base_prompt:
         return "Enter a prompt or upload a file.", ""
@@ -236,15 +241,18 @@ def run_llm_request(
     return response.text, format_cost_compact_html(response, cost)
 
 
-def on_upload(prompt_text, uploaded_file):
-    file_path = None
-    if uploaded_file:
-        file_path = uploaded_file if isinstance(uploaded_file, str) else uploaded_file[0]
-    vars_table, vars_empty = refresh_variables(prompt_text, file_path)
-    chip = ""
-    if file_path:
-        chip = f'<span class="file-chip">📎 {html.escape(Path(file_path).name)}</span>'
-    return file_path, chip, vars_table, vars_empty
+def on_upload(uploaded_file):
+    if not uploaded_file:
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(),
+        )
+
+    file_path = uploaded_file if isinstance(uploaded_file, str) else uploaded_file[0]
+    content = read_prompt_file(file_path)
+    vars_table, vars_empty = refresh_variables(content)
+    return content, vars_table, vars_empty
 
 
 def build_ui() -> gr.Blocks:
@@ -256,8 +264,6 @@ def build_ui() -> gr.Blocks:
     initial_supports_temp = model_supports_temperature(initial_model)
 
     with gr.Blocks(title="LLM Chat", css=CUSTOM_CSS) as demo:
-        prompt_file = gr.State(value=None)
-
         with gr.Column(elem_classes=["app-shell"]):
             # ── toolbar ──
             with gr.Row(elem_classes=["topbar"]):
@@ -287,15 +293,6 @@ def build_ui() -> gr.Blocks:
                     interactive=initial_supports_temp,
                     scale=1,
                 )
-                upload_btn = gr.UploadButton(
-                    "Upload",
-                    file_types=[".txt", ".md", ".py"],
-                    file_count="single",
-                    size="sm",
-                    variant="secondary",
-                    scale=0,
-                )
-                file_chip = gr.HTML(scale=0)
                 send_btn = gr.Button("Send", variant="primary", size="sm", scale=0)
 
             # ── workspace: prompt | variables | output ──
@@ -303,10 +300,17 @@ def build_ui() -> gr.Blocks:
                 with gr.Column(elem_classes=["pane"], scale=2):
                     gr.Markdown("Prompt", elem_classes=["pane-title"])
                     with gr.Column(elem_classes=["pane-body"]):
+                        upload_btn = gr.UploadButton(
+                            "Upload Prompt",
+                            file_types=[".txt", ".md", ".py"],
+                            file_count="single",
+                            size="sm",
+                            variant="secondary",
+                        )
                         prompt_text = gr.Textbox(
                             label=None,
                             show_label=False,
-                            placeholder="Write or upload a prompt…",
+                            placeholder="Write a prompt…",
                             lines=20,
                             max_lines=20,
                         )
@@ -330,7 +334,6 @@ def build_ui() -> gr.Blocks:
 
                 with gr.Column(elem_classes=["pane"], scale=2):
                     gr.Markdown("Output", elem_classes=["pane-title"])
-                    cost_bar = gr.HTML("")
                     with gr.Column(elem_classes=["pane-body"]):
                         response_box = gr.Textbox(
                             label=None,
@@ -340,6 +343,7 @@ def build_ui() -> gr.Blocks:
                             interactive=False,
                             placeholder="Response…",
                         )
+                        cost_bar = gr.HTML("")
 
         provider.change(
             on_provider_change,
@@ -354,13 +358,13 @@ def build_ui() -> gr.Blocks:
 
         upload_btn.upload(
             on_upload,
-            inputs=[prompt_text, upload_btn],
-            outputs=[prompt_file, file_chip, variables_table, vars_empty],
+            inputs=[upload_btn],
+            outputs=[prompt_text, variables_table, vars_empty],
         )
 
         prompt_text.change(
             refresh_variables,
-            inputs=[prompt_text, prompt_file],
+            inputs=[prompt_text],
             outputs=[variables_table, vars_empty],
         )
 
@@ -371,7 +375,6 @@ def build_ui() -> gr.Blocks:
                 model_dropdown,
                 temperature,
                 prompt_text,
-                prompt_file,
                 variables_table,
             ],
             outputs=[response_box, cost_bar],
